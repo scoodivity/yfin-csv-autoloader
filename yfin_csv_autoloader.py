@@ -21,11 +21,6 @@ logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 logging.disable(logging.DEBUG)
 
 
-def clear():
-    """Clears the screen."""
-    print('\033c\033[3J', end='')
-
-
 def convert_time(date_str):
     """Converts dates to timestamps."""
     time_tuple = dt.datetime.strptime(date_str, '%m/%d/%Y:%H').timetuple()
