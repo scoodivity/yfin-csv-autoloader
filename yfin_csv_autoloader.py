@@ -4,113 +4,119 @@
 yfin_csv_autoloader.py: 
 Exports ETF price data and organizes it into the format needed by a 
 custom (Google) Sheets-based backtester.
+Update end date in config.py.
 """
 
-import logging
-import datetime as dt
 import requests
+import datetime as dt
 import time
 import csv
+import logging
 
 from concurrent.futures import ThreadPoolExecutor
 
+import config
+
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
-#logging.disable(logging.CRITICAL)
+logging.disable(logging.DEBUG)
+
 
 def clear():
     """Clears the screen."""
     print('\033c\033[3J', end='')
+
 
 def convert_time(date_str):
     """Converts dates to timestamps."""
     time_tuple = dt.datetime.strptime(date_str, '%m/%d/%Y:%H').timetuple()
     return int(time.mktime(time_tuple))
 
+
 def form_query(query_ticker, query_start, query_end):
     """Forms Yahoo! query URL for CSVs."""
-    yf_query = f'https://query1.finance.yahoo.com/v7/finance/download/{query_ticker}?period1={query_start}&period2={query_end}&interval=1d&events=history&includeAdjustedClose=true'
+    yf_query = (
+        f'https://query1.finance.yahoo.com/v7/finance/download/'
+        f'{query_ticker}?period1={query_start}&period2={query_end}&'
+        f'interval=1d&events=history&includeAdjustedClose=true'
+        )
     return yf_query
 
-def download_csv(packed_params):
-    """Downloads, writes, sorts, rewrites CSVs."""
-    ticker = packed_params[0]
-    query_str = packed_params[1]
-    headers = {
-        'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 Safari/537.36',
+
+def download_csv(params):
+    """Downloads CSVs and returns row count."""
+    ticker = params[0]
+    query_str = params[1]
+    header_str = {
+        'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 '
+        'Safari/537.36',
         }
 
-    res = requests.get(query_str, headers=headers)
-    res.raise_for_status()
-    play_file = open(f'{ticker}.csv', 'wb')
+    response = requests.get(query_str, headers=header_str)
+    response.raise_for_status()
+    row_count = len(response.text.splitlines())
+
+    with open(f'{ticker}.csv', 'w') as csv_file:
+        csv_file.write(response.text)
     
-    for chunk in res.iter_content(chunk_size=None):
-        play_file.write(chunk)
-    play_file.close()
-
-    with open(f'{ticker}.csv', newline='') as csv_file:
-        reader = csv.reader(csv_file)
-        sorted_list = sorted(reader, key=lambda x: x[0], reverse = True)
-
-    with open(f'{ticker}.csv', 'w') as csv_out:
-        wrtr = csv.writer(csv_out)
-        wrtr.writerows(sorted_list)
-
     print(f'{ticker} created.')
+    response.close()
+    return row_count
 
-def merge_csv(universe):
+
+def merge_csvs(datasets, max_rows):
     """Merges CSVs."""
-    
-    datasets = [(ticker + '.csv') for ticker in universe]
-    datasets_len_list = []
-    dataset_len_min = 0
-    buffer_row = []
+    print(f"max_rows: {max_rows}")
+    buffer = []
 
-    # Appends .csv to universe to create datasets list.
-    for ticker in universe:
-        datasets.append(ticker + '.csv')
-
-    # Gets the minimum number of rows across all CSVs/
     for dataset in datasets:
-        open_csv = open(dataset)
-        open_reader = csv.reader(open_csv)
-        open_data = list(open_reader)
-        datasets_len_list.append(len(open_data))
-        open_csv.close()
-    dataset_len_min = min(datasets_len_list)
+        with open(dataset, 'r') as open_csv:
+            reader = csv.reader(open_csv)
+            reader = sorted(reader, key=lambda x: x[0], reverse=True)
+            for i, row in enumerate(reader):
+                if i == max_rows:
+                    break 
+                logging.info(f"writing row: {i + 1} to merged.csv")
+                try:
+                    buffer[i].extend(row + ['', ''])
+                except IndexError:
+                    buffer.append([])
+                    buffer[i].extend(row + ['', ''])
 
-    merged_file = open('merged.csv', 'w', newline='')
-    merged_writer = csv.writer(merged_file)
+    with open('merged.csv', 'w') as merged:
+        writer = csv.writer(merged)
+        writer.writerows(buffer)
 
-    print(f'Minimum rows: {dataset_len_min}')
-    for row in range(dataset_len_min):
-        buffer_row = []
-        for dataset in datasets:
-            open_csv = open(dataset)
-            open_reader = csv.reader(open_csv)
-            open_data = list(open_reader)
-            buffer_row.extend(open_data[row] + ['', ''])
-
-        print(f'Writing row {row}')
-        merged_writer.writerow(buffer_row)
 
 def main_loop():
     """Calls sub-functions."""
-    
-    start_date = convert_time('01/29/1993:9')   # MM/DD/YYYY:HOUR (use 9AM)
-    end_date = convert_time('11/30/2023:9')     # Update this date.
     universe = [
         'AGG', 'EEM', 'SPY', 'VGK', 'EWJ', 'VNQ', 
         'RWX', 'GLD', 'TLT', 'DBC', 'IEF', 'SHY', 
         'LQD', 'PDBC', 'QQQ', 'IWM',
         ]
+    #universe = ['SPY', 'QQQ',]      # Testing only.
+
+    start_date = convert_time('01/29/1993:9') 
+    end_date = convert_time(config.end_date)   
+
     worker_count = len(universe)
-    
+    datasets = [(ticker + '.csv') for ticker in universe]    
     queries = [form_query(ticker, start_date, end_date) for ticker in universe]
-    packed_params = zip(universe, queries)
+    
+    params = zip(universe, queries)
 
+    row_counts = []
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        return executor.map(download_csv, packed_params)
+        row_counts += executor.map(download_csv, params)
 
-    merge_csv(universe)
+    max_rows = min(row_counts)
+    """Sets the maximum number of rows to write (to merged.csv) to equal
+    the smallest number of rows across all CSVs. (Bottlenecked by least
+    data.)
+    """
+
+    merge_csvs(datasets, max_rows)
+
 
 main_loop()
