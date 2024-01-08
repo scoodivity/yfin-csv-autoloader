@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import config
 
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
-logging.disable(logging.DEBUG)
+logging.disable(logging.CRITICAL)
 
 
 def convert_time(date_str):
@@ -94,11 +94,9 @@ def main_loop():
 
     start_date = convert_time('01/29/1993:9') 
     end_date = convert_time(config.end_date)   
-
     worker_count = len(universe)
     datasets = [(ticker + '.csv') for ticker in universe]    
     queries = [form_query(ticker, start_date, end_date) for ticker in universe]
-    
     params = zip(universe, queries)
 
     row_counts = []
