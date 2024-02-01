@@ -1,0 +1,6 @@
+__pycache__
+merger.py
+make_csv.py
+config.py
+
+*.csv
